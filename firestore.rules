@@ -1,0 +1,438 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Hardened Global Primitives
+    // =========================================================================
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrapAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'delfikarnain@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidEmail(val) {
+      return val is string && val.size() >= 5 && val.size() <= 160 && val.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$');
+    }
+
+    // =========================================================================
+    // Validation Blueprints (Anti-Update-Gap)
+    // =========================================================================
+
+    function isValidAdminDoc(data, docId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'createdAt']) &&
+        data.uid == docId &&
+        isValidId(data.uid) &&
+        isValidEmail(data.email) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll([
+          'title', 'subtitle', 'organizer', 'eventDate', 'location',
+          'status', 'requirePhoto', 'requireGps', 'certificatePrefix',
+          'signatoryName', 'signatoryTitle', 'templateId',
+          'autoEmailOnCheckIn', 'autoDeliverOnComplete',
+          'ownerId', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title', 'subtitle', 'organizer', 'eventDate', 'location',
+          'status', 'requirePhoto', 'requireGps', 'certificatePrefix',
+          'signatoryName', 'signatoryTitle', 'templateId',
+          'autoEmailOnCheckIn', 'autoDeliverOnComplete',
+          'ownerId', 'createdAt', 'updatedAt', 'completedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
+        data.subtitle is string && data.subtitle.size() <= 240 &&
+        data.organizer is string && data.organizer.size() >= 2 && data.organizer.size() <= 140 &&
+        data.eventDate is string && data.eventDate.size() >= 4 && data.eventDate.size() <= 80 &&
+        data.location is string && data.location.size() >= 2 && data.location.size() <= 160 &&
+        data.status in ['draft', 'active', 'completed'] &&
+        data.requirePhoto is bool &&
+        data.requireGps is bool &&
+        data.certificatePrefix is string && data.certificatePrefix.size() >= 2 && data.certificatePrefix.size() <= 20 && data.certificatePrefix.matches('^[A-Z0-9\\-]+$') &&
+        data.signatoryName is string && data.signatoryName.size() >= 2 && data.signatoryName.size() <= 120 &&
+        data.signatoryTitle is string && data.signatoryTitle.size() >= 2 && data.signatoryTitle.size() <= 140 &&
+        data.templateId is string && data.templateId.size() <= 128 &&
+        data.autoEmailOnCheckIn is bool &&
+        data.autoDeliverOnComplete is bool &&
+        isValidId(data.ownerId) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp &&
+        (!('completedAt' in data) || data.completedAt is timestamp);
+    }
+
+    function isValidTemplate(data) {
+      return data.keys().hasAll([
+          'name', 'description', 'imageDataUrl', 'aspectRatio',
+          'fields', 'isDefault', 'ownerId', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'name', 'description', 'imageDataUrl', 'aspectRatio',
+          'fields', 'isDefault', 'ownerId', 'createdAt', 'updatedAt'
+        ]) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.description is string && data.description.size() <= 240 &&
+        data.imageDataUrl is string && data.imageDataUrl.size() <= 700000 &&
+        data.aspectRatio in ['4:3', '16:9', 'A4'] &&
+        data.fields is map && data.fields.keys().size() <= 16 &&
+        data.isDefault is bool &&
+        isValidId(data.ownerId) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRegistration(data, eventId) {
+      return data.keys().hasAll([
+          'eventId', 'userId', 'fullName', 'email', 'phoneNumber',
+          'institution', 'role', 'paperCode', 'paperTitle',
+          'registrationStatus', 'claimCode', 'checkInRef',
+          'photoCaptured', 'photoThumbnail', 'gpsLat', 'gpsLng', 'gpsVerified',
+          'confirmationEmailStatus', 'certificateEmailStatus',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'eventId', 'userId', 'fullName', 'email', 'phoneNumber',
+          'institution', 'role', 'paperCode', 'paperTitle',
+          'registrationStatus', 'claimCode', 'checkInRef',
+          'photoCaptured', 'photoThumbnail', 'gpsLat', 'gpsLng', 'gpsVerified',
+          'confirmationEmailStatus', 'certificateEmailStatus',
+          'checkedInAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.eventId == eventId &&
+        isValidId(data.userId) &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+        isValidEmail(data.email) &&
+        data.phoneNumber is string && data.phoneNumber.size() <= 32 &&
+        data.institution is string && data.institution.size() >= 2 && data.institution.size() <= 160 &&
+        data.role in ['Participant', 'Presenter', 'Keynote Speaker', 'Moderator', 'Committee'] &&
+        data.paperCode is string && data.paperCode.size() <= 40 &&
+        data.paperTitle is string && data.paperTitle.size() <= 240 &&
+        data.registrationStatus in ['registered', 'checked_in', 'cancelled'] &&
+        data.claimCode is string && data.claimCode.size() <= 64 &&
+        data.checkInRef is string && data.checkInRef.size() <= 64 &&
+        data.photoCaptured is bool &&
+        data.photoThumbnail is string && data.photoThumbnail.size() <= 120000 &&
+        data.gpsLat is number && data.gpsLat >= -90 && data.gpsLat <= 90 &&
+        data.gpsLng is number && data.gpsLng >= -180 && data.gpsLng <= 180 &&
+        data.gpsVerified is bool &&
+        data.confirmationEmailStatus in ['pending', 'queued', 'sent', 'failed'] &&
+        data.certificateEmailStatus in ['pending', 'queued', 'sent', 'failed'] &&
+        (!('checkedInAt' in data) || data.checkedInAt is timestamp) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCertificate(data, claimCode) {
+      return data.keys().hasAll([
+          'claimCode', 'eventId', 'registrationId', 'eventName', 'eventDate',
+          'organizer', 'fullName', 'institution', 'role',
+          'paperCode', 'paperTitle', 'signatoryName', 'signatoryTitle',
+          'templateId', 'verificationHash', 'status', 'ownerId', 'issuedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'claimCode', 'eventId', 'registrationId', 'eventName', 'eventDate',
+          'organizer', 'fullName', 'institution', 'role',
+          'paperCode', 'paperTitle', 'signatoryName', 'signatoryTitle',
+          'templateId', 'verificationHash', 'status', 'ownerId', 'issuedAt'
+        ]) &&
+        data.claimCode == claimCode &&
+        isValidId(data.claimCode) &&
+        isValidId(data.eventId) &&
+        isValidId(data.registrationId) &&
+        data.eventName is string && data.eventName.size() >= 3 && data.eventName.size() <= 160 &&
+        data.eventDate is string && data.eventDate.size() >= 4 && data.eventDate.size() <= 80 &&
+        data.organizer is string && data.organizer.size() >= 2 && data.organizer.size() <= 140 &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+        data.institution is string && data.institution.size() >= 2 && data.institution.size() <= 160 &&
+        data.role in ['Participant', 'Presenter', 'Keynote Speaker', 'Moderator', 'Committee'] &&
+        data.paperCode is string && data.paperCode.size() <= 40 &&
+        data.paperTitle is string && data.paperTitle.size() <= 240 &&
+        data.signatoryName is string && data.signatoryName.size() >= 2 && data.signatoryName.size() <= 120 &&
+        data.signatoryTitle is string && data.signatoryTitle.size() >= 2 && data.signatoryTitle.size() <= 140 &&
+        data.templateId is string && data.templateId.size() <= 128 &&
+        data.verificationHash is string && data.verificationHash.size() >= 16 && data.verificationHash.size() <= 128 && data.verificationHash.matches('^[a-f0-9]+$') &&
+        data.status in ['issued', 'revoked'] &&
+        isValidId(data.ownerId) &&
+        data.issuedAt is timestamp;
+    }
+
+    function isValidEmailLog(data, eventId) {
+      return data.keys().hasAll([
+          'eventId', 'registrationId', 'userId', 'recipientName', 'recipientEmail',
+          'claimCode', 'emailType', 'triggerFunction', 'subject', 'certificateUrl',
+          'status', 'errorMessage', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'eventId', 'registrationId', 'userId', 'recipientName', 'recipientEmail',
+          'claimCode', 'emailType', 'triggerFunction', 'subject', 'certificateUrl',
+          'status', 'errorMessage', 'createdAt', 'updatedAt'
+        ]) &&
+        data.eventId == eventId &&
+        isValidId(data.registrationId) &&
+        isValidId(data.userId) &&
+        data.recipientName is string && data.recipientName.size() >= 2 && data.recipientName.size() <= 120 &&
+        isValidEmail(data.recipientEmail) &&
+        data.claimCode is string && data.claimCode.size() <= 64 &&
+        data.emailType in ['checkin_confirmation', 'certificate_delivery'] &&
+        data.triggerFunction in ['onAttendanceCreated', 'onEventCompleted', 'triggerCertificateDispatch'] &&
+        data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 200 &&
+        data.certificateUrl is string && data.certificateUrl.size() <= 400 &&
+        data.status in ['queued', 'sent', 'failed'] &&
+        data.errorMessage is string && data.errorMessage.size() <= 300 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Rules
+    // =========================================================================
+
+    // 1. Admins collection
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && isVerifiedUser() && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isBootstrapAdmin();
+      allow create: if isVerifiedUser() &&
+        isValidId(adminUid) &&
+        isValidAdminDoc(incoming(), adminUid) &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() &&
+        isValidId(adminUid) &&
+        isValidAdminDoc(incoming(), adminUid) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName']);
+      allow delete: if isValidId(adminUid) && isBootstrapAdmin();
+    }
+
+    // 2. Events collection (Non-PII public event metadata)
+    match /events/{eventId} {
+      allow get: if isValidId(eventId) && (existing().status in ['active', 'completed'] || isAdmin());
+      allow list: if isBootstrapAdmin() || existing().status in ['active', 'completed'] || (isSignedIn() && existing().ownerId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(eventId) &&
+        isValidEvent(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(eventId) &&
+        isValidEvent(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Admin lifecycle management & terminal-state override
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'subtitle', 'organizer', 'eventDate', 'location',
+            'status', 'requirePhoto', 'requireGps', 'certificatePrefix',
+            'signatoryName', 'signatoryTitle', 'templateId',
+            'autoEmailOnCheckIn', 'autoDeliverOnComplete', 'updatedAt', 'completedAt'
+          ]))
+        );
+
+      allow delete: if isValidId(eventId) && isAdmin();
+
+      // 2a. Registrations & Attendance subcollection (PII-isolated)
+      match /registrations/{registrationId} {
+        allow get: if isValidId(eventId) && isValidId(registrationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+        allow list: if isSignedIn() && (isBootstrapAdmin() || existing().userId == request.auth.uid);
+
+        allow create: if isVerifiedUser() &&
+          isValidId(eventId) &&
+          isValidId(registrationId) &&
+          isValidRegistration(incoming(), eventId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/events/$(eventId)) &&
+          (
+            isAdmin() ||
+            (
+              incoming().userId == request.auth.uid &&
+              get(/databases/$(database)/documents/events/$(eventId)).data.status == 'active' &&
+              incoming().registrationStatus == 'checked_in' &&
+              incoming().confirmationEmailStatus in ['pending', 'queued'] &&
+              incoming().certificateEmailStatus == 'pending'
+            )
+          );
+
+        allow update: if isVerifiedUser() &&
+          isValidId(eventId) &&
+          isValidId(registrationId) &&
+          isValidRegistration(incoming(), eventId) &&
+          incoming().eventId == existing().eventId &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/events/$(eventId)) &&
+          (
+            // Tier 1: Admin management & email dispatch status updates
+            (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+              'fullName', 'email', 'phoneNumber', 'institution', 'role',
+              'paperCode', 'paperTitle', 'registrationStatus', 'claimCode',
+              'checkInRef', 'photoCaptured', 'photoThumbnail', 'gpsLat', 'gpsLng',
+              'gpsVerified', 'confirmationEmailStatus', 'certificateEmailStatus',
+              'checkedInAt', 'updatedAt'
+            ])) ||
+            // Tier 2: Pre-registered participant completing live attendance check-in
+            (
+              existing().userId == request.auth.uid &&
+              existing().registrationStatus == 'registered' &&
+              incoming().registrationStatus == 'checked_in' &&
+              incoming().confirmationEmailStatus in ['pending', 'queued'] &&
+              get(/databases/$(database)/documents/events/$(eventId)).data.status == 'active' &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'fullName', 'phoneNumber', 'institution', 'role', 'paperCode', 'paperTitle',
+                'registrationStatus', 'claimCode', 'checkInRef',
+                'photoCaptured', 'photoThumbnail', 'gpsLat', 'gpsLng', 'gpsVerified',
+                'confirmationEmailStatus', 'checkedInAt', 'updatedAt'
+              ])
+            )
+          );
+
+        allow delete: if isValidId(eventId) && isValidId(registrationId) && isAdmin();
+      }
+
+      // 2b. Automated Email Queue & Cloud Functions Delivery Logs (PII-isolated)
+      match /emailLogs/{logId} {
+        allow get: if isValidId(eventId) && isValidId(logId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+        allow list: if isSignedIn() && (isBootstrapAdmin() || existing().userId == request.auth.uid);
+
+        allow create: if isVerifiedUser() &&
+          isValidId(eventId) &&
+          isValidId(logId) &&
+          isValidEmailLog(incoming(), eventId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/events/$(eventId)) &&
+          (
+            isAdmin() ||
+            (
+              incoming().userId == request.auth.uid &&
+              incoming().emailType == 'checkin_confirmation' &&
+              incoming().triggerFunction == 'onAttendanceCreated' &&
+              incoming().status == 'queued' &&
+              get(/databases/$(database)/documents/events/$(eventId)).data.status == 'active'
+            )
+          );
+
+        allow update: if isVerifiedUser() &&
+          isValidId(eventId) &&
+          isValidId(logId) &&
+          isValidEmailLog(incoming(), eventId) &&
+          incoming().eventId == existing().eventId &&
+          incoming().registrationId == existing().registrationId &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          isAdmin() &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'errorMessage', 'updatedAt']);
+
+        allow delete: if isValidId(eventId) && isValidId(logId) && isAdmin();
+      }
+    }
+
+    // 3. Certificate Templates collection (Non-PII design templates)
+    match /templates/{templateId} {
+      allow get: if isValidId(templateId);
+      allow list: if isBootstrapAdmin() || existing().isDefault == true || (isSignedIn() && existing().ownerId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(templateId) &&
+        isValidTemplate(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(templateId) &&
+        isValidTemplate(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'description', 'imageDataUrl', 'aspectRatio', 'fields', 'isDefault', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(templateId) && isAdmin();
+    }
+
+    // 4. Public Certificate Verification collection (ZERO PII — Split Collection)
+    match /certificates/{claimCode} {
+      allow get: if isValidId(claimCode);
+      allow list: if isBootstrapAdmin() || (isSignedIn() && existing().ownerId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(claimCode) &&
+        isValidCertificate(incoming(), claimCode) &&
+        incoming().issuedAt == request.time &&
+        exists(/databases/$(database)/documents/events/$(incoming().eventId)) &&
+        existsAfter(/databases/$(database)/documents/events/$(incoming().eventId)/registrations/$(incoming().registrationId)) &&
+        (
+          isAdmin() ||
+          (
+            incoming().ownerId == request.auth.uid &&
+            incoming().status == 'issued' &&
+            get(/databases/$(database)/documents/events/$(incoming().eventId)).data.status == 'active'
+          )
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(claimCode) &&
+        isValidCertificate(incoming(), claimCode) &&
+        incoming().claimCode == existing().claimCode &&
+        incoming().eventId == existing().eventId &&
+        incoming().registrationId == existing().registrationId &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().issuedAt == existing().issuedAt &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'fullName', 'institution', 'role', 'paperCode', 'paperTitle',
+          'signatoryName', 'signatoryTitle', 'templateId', 'status'
+        ]);
+
+      allow delete: if isValidId(claimCode) && isAdmin();
+    }
+  }
+}

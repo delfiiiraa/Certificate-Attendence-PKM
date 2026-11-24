@@ -1,0 +1,630 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized event organizer administrator account record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the administrator."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160,
+          "description": "Verified email address of the administrator."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display name of the administrator."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "Official academic or institutional event with attendance check-in and automated certificate issuance.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "description": "Official event title."
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Optional secondary event theme or faculty unit."
+        },
+        "organizer": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Organizing institution or committee name."
+        },
+        "eventDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 80,
+          "description": "Human-readable event date or date range."
+        },
+        "location": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160,
+          "description": "Venue name, auditorium, or virtual platform."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "active", "completed"],
+          "description": "Lifecycle state of the event. Transitioning to completed triggers automated certificate email delivery."
+        },
+        "requirePhoto": {
+          "type": "boolean",
+          "description": "Whether live camera photo verification is required during check-in."
+        },
+        "requireGps": {
+          "type": "boolean",
+          "description": "Whether GPS coordinates capture is enabled during check-in."
+        },
+        "certificatePrefix": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 20,
+          "pattern": "^[A-Z0-9\\-]+$",
+          "description": "Prefix for generated certificate claim codes (e.g. UIN-2026)."
+        },
+        "signatoryName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Name of official signatory printed on certificates."
+        },
+        "signatoryTitle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Title of official signatory printed on certificates."
+        },
+        "templateId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Reference ID to a document in templates collection, or empty string for built-in template."
+        },
+        "autoEmailOnCheckIn": {
+          "type": "boolean",
+          "description": "Trigger automated check-in confirmation email via Cloud Function."
+        },
+        "autoDeliverOnComplete": {
+          "type": "boolean",
+          "description": "Trigger automated batch certificate delivery emails when event status becomes completed."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the admin who created the event."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last modification."
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional server timestamp when event was marked completed."
+        }
+      },
+      "required": [
+        "title",
+        "subtitle",
+        "organizer",
+        "eventDate",
+        "location",
+        "status",
+        "requirePhoto",
+        "requireGps",
+        "certificatePrefix",
+        "signatoryName",
+        "signatoryTitle",
+        "templateId",
+        "autoEmailOnCheckIn",
+        "autoDeliverOnComplete",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CertificateTemplate": {
+      "title": "CertificateTemplate",
+      "description": "Uploaded certificate background image and field layout coordinates.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Human-readable template name."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Template usage notes."
+        },
+        "imageDataUrl": {
+          "type": "string",
+          "maxLength": 700000,
+          "description": "Compressed data URL of uploaded template background, or empty string for built-in institutional artwork."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "enum": ["4:3", "16:9", "A4"],
+          "description": "Print geometry ratio for canvas rendering."
+        },
+        "fields": {
+          "type": "object",
+          "description": "Normalized coordinate and typography map for dynamic certificate fields."
+        },
+        "isDefault": {
+          "type": "boolean",
+          "description": "Whether this template is the default fallback."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of admin who uploaded the template."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "imageDataUrl",
+        "aspectRatio",
+        "fields",
+        "isDefault",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Registration": {
+      "title": "Registration",
+      "description": "PII-protected participant registration and attendance check-in record for an event.",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent event ID."
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of authenticated participant or registering admin."
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Participant full name as printed on certificate."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160,
+          "description": "Private participant email address for automated confirmation and certificate delivery."
+        },
+        "phoneNumber": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Private WhatsApp or mobile number."
+        },
+        "institution": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160,
+          "description": "University, faculty, or organization affiliation."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["Participant", "Presenter", "Keynote Speaker", "Moderator", "Committee"],
+          "description": "Official participation role on the certificate."
+        },
+        "paperCode": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional conference paper code for presenters."
+        },
+        "paperTitle": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Optional conference paper title for presenters."
+        },
+        "registrationStatus": {
+          "type": "string",
+          "enum": ["registered", "checked_in", "cancelled"],
+          "description": "Attendance verification state."
+        },
+        "claimCode": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Unique certificate claim code issued upon check-in."
+        },
+        "checkInRef": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Unique check-in receipt reference."
+        },
+        "photoCaptured": {
+          "type": "boolean",
+          "description": "Whether live camera verification photo was captured."
+        },
+        "photoThumbnail": {
+          "type": "string",
+          "maxLength": 120000,
+          "description": "Optional small compressed check-in selfie thumbnail."
+        },
+        "gpsLat": {
+          "type": "number",
+          "description": "Captured GPS latitude (0 if unavailable)."
+        },
+        "gpsLng": {
+          "type": "number",
+          "description": "Captured GPS longitude (0 if unavailable)."
+        },
+        "gpsVerified": {
+          "type": "boolean",
+          "description": "Whether geolocation coordinates were verified."
+        },
+        "confirmationEmailStatus": {
+          "type": "string",
+          "enum": ["pending", "queued", "sent", "failed"],
+          "description": "Check-in confirmation email trigger status."
+        },
+        "certificateEmailStatus": {
+          "type": "string",
+          "enum": ["pending", "queued", "sent", "failed"],
+          "description": "Post-event automated certificate delivery email status."
+        },
+        "checkedInAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional server timestamp when attendance was verified."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of registration."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "eventId",
+        "userId",
+        "fullName",
+        "email",
+        "phoneNumber",
+        "institution",
+        "role",
+        "paperCode",
+        "paperTitle",
+        "registrationStatus",
+        "claimCode",
+        "checkInRef",
+        "photoCaptured",
+        "photoThumbnail",
+        "gpsLat",
+        "gpsLng",
+        "gpsVerified",
+        "confirmationEmailStatus",
+        "certificateEmailStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Public non-PII cryptographic certificate verification record indexed by claimCode.",
+      "type": "object",
+      "properties": {
+        "claimCode": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Public certificate claim code matching document ID."
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent event ID."
+        },
+        "registrationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated registration document ID."
+        },
+        "eventName": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "description": "Event name printed on certificate."
+        },
+        "eventDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 80,
+          "description": "Event date printed on certificate."
+        },
+        "organizer": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Organizing unit name."
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Recipient name printed on certificate."
+        },
+        "institution": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160,
+          "description": "Recipient institution."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["Participant", "Presenter", "Keynote Speaker", "Moderator", "Committee"],
+          "description": "Recipient participation role."
+        },
+        "paperCode": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional presenter paper code."
+        },
+        "paperTitle": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Optional presenter paper title."
+        },
+        "signatoryName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Official signatory name."
+        },
+        "signatoryTitle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Official signatory title."
+        },
+        "templateId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Template document ID or empty string."
+        },
+        "verificationHash": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[a-f0-9]+$",
+          "description": "SHA-256 verification digest."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["issued", "revoked"],
+          "description": "Validity state of the issued certificate."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of attendee or issuing admin."
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of certificate issuance."
+        }
+      },
+      "required": [
+        "claimCode",
+        "eventId",
+        "registrationId",
+        "eventName",
+        "eventDate",
+        "organizer",
+        "fullName",
+        "institution",
+        "role",
+        "paperCode",
+        "paperTitle",
+        "signatoryName",
+        "signatoryTitle",
+        "templateId",
+        "verificationHash",
+        "status",
+        "ownerId",
+        "issuedAt"
+      ]
+    },
+    "EmailLog": {
+      "title": "EmailLog",
+      "description": "PII-protected automated email queue and Cloud Functions delivery log.",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent event ID."
+        },
+        "registrationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated registration ID."
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner UID for PII isolation."
+        },
+        "recipientName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Attendee full name."
+        },
+        "recipientEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160,
+          "description": "Attendee private email address."
+        },
+        "claimCode": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Certificate claim code included in email."
+        },
+        "emailType": {
+          "type": "string",
+          "enum": ["checkin_confirmation", "certificate_delivery"],
+          "description": "Type of automated email triggered."
+        },
+        "triggerFunction": {
+          "type": "string",
+          "enum": ["onAttendanceCreated", "onEventCompleted", "triggerCertificateDispatch"],
+          "description": "Firebase Cloud Function trigger responsible for dispatch."
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "description": "Rendered email subject line."
+        },
+        "certificateUrl": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "Verification and download link included in email."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["queued", "sent", "failed"],
+          "description": "Delivery pipeline state."
+        },
+        "errorMessage": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Error detail if status is failed, otherwise empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when email was queued."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last status change."
+        }
+      },
+      "required": [
+        "eventId",
+        "registrationId",
+        "userId",
+        "recipientName",
+        "recipientEmail",
+        "claimCode",
+        "emailType",
+        "triggerFunction",
+        "subject",
+        "certificateUrl",
+        "status",
+        "errorMessage",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Admin role allowlist documents."
+    },
+    "/events/{eventId}": {
+      "schema": { "$ref": "#/entities/Event" },
+      "description": "Official event configurations and lifecycle status."
+    },
+    "/templates/{templateId}": {
+      "schema": { "$ref": "#/entities/CertificateTemplate" },
+      "description": "Uploaded certificate templates and layout coordinate maps."
+    },
+    "/events/{eventId}/registrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/Registration" },
+      "description": "PII-protected participant registrations and attendance check-ins."
+    },
+    "/certificates/{claimCode}": {
+      "schema": { "$ref": "#/entities/Certificate" },
+      "description": "Public non-PII certificate verification records keyed by claimCode."
+    },
+    "/events/{eventId}/emailLogs/{logId}": {
+      "schema": { "$ref": "#/entities/EmailLog" },
+      "description": "PII-protected Cloud Functions automated email queue and delivery logs."
+    }
+  }
+}
