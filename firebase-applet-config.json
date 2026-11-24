@@ -1,12 +1,12 @@
 {
-  "projectId": "persuasive-kite-lk8sk",
-  "appId": "1:372788253406:web:7e7728c90430e5d195e84f",
-  "apiKey": "AIzaSyDEe9GAyVJpLCLSQa6i4yygNtI_WYNaSZY",
-  "authDomain": "persuasive-kite-lk8sk.firebaseapp.com",
+  "projectId": "gen-lang-client-0104761950",
+  "appId": "1:909292354531:web:11065872bb00831392bed6",
+  "apiKey": "AIzaSyAf2I13P7hmD63Ad7nuBnFiEDp99v7zLec",
+  "authDomain": "gen-lang-client-0104761950.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-66c029ca-9bd7-4fb1-8571-9606c861238f",
-  "storageBucket": "persuasive-kite-lk8sk.firebasestorage.app",
-  "messagingSenderId": "372788253406",
+  "storageBucket": "gen-lang-client-0104761950.firebasestorage.app",
+  "messagingSenderId": "909292354531",
   "measurementId": "",
-  "oAuthClientId": "372788253406-qo5g4mkd5n0ktb1p675upia01jrac5f7.apps.googleusercontent.com",
+  "oAuthClientId": "909292354531-1cb22ti9l3mmur6od140gnljh8qbopa3.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

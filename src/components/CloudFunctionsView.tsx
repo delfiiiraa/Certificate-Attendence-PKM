@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  AlertCircle,
   Check,
   CheckCircle2,
   Clock,
@@ -9,30 +10,33 @@ import {
   Send,
   Terminal,
   X,
-  AlertCircle,
 } from 'lucide-react';
 import { FIREBASE_PROJECT_ID, FIRESTORE_DATABASE_ID } from '../firebase';
-import type { EmailLogRecord, EventRecord } from '../types';
-import { updateEmailLogDeliveryStatus } from '../lib/firestoreService';
+import type { EmailLogRecord, EventRecord, RegistrationRecord } from '../types';
+import type { SendEmailConfirmRequest } from './SendEmailConfirmModal';
 
 interface CloudFunctionsViewProps {
   selectedEvent: EventRecord | null;
+  registrations: RegistrationRecord[];
   emailLogs: EmailLogRecord[];
   isAdmin: boolean;
-  onCompleteEvent?: () => Promise<void>;
+  senderEmail: string;
+  hasGmailToken: boolean;
+  onRequestSendEmails: (req: SendEmailConfirmRequest) => void;
 }
 
 export function CloudFunctionsView({
   selectedEvent,
+  registrations,
   emailLogs,
   isAdmin,
-  onCompleteEvent,
+  senderEmail,
+  hasGmailToken,
+  onRequestSendEmails,
 }: CloudFunctionsViewProps) {
   const [filterType, setFilterType] = useState<'all' | 'checkin_confirmation' | 'certificate_delivery'>('all');
   const [previewLog, setPreviewLog] = useState<EmailLogRecord | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [updatingId, setUpdatingId] = useState('');
-  const [completing, setCompleting] = useState(false);
 
   const filteredLogs = emailLogs.filter((log) =>
     filterType === 'all' ? true : log.emailType === filterType
@@ -41,6 +45,13 @@ export function CloudFunctionsView({
   const queuedCount = emailLogs.filter((l) => l.status === 'queued').length;
   const sentCount = emailLogs.filter((l) => l.status === 'sent').length;
   const failedCount = emailLogs.filter((l) => l.status === 'failed').length;
+
+  const checkedInAttendees = registrations.filter(
+    (r) => r.registrationStatus === 'checked_in' && Boolean(r.claimCode) && Boolean(r.email)
+  );
+  const pendingCertAttendees = checkedInAttendees.filter(
+    (r) => r.certificateEmailStatus !== 'sent'
+  );
 
   const deployCommands = `cd functions && npm install && npm run build
 firebase use ${FIREBASE_PROJECT_ID}
@@ -57,78 +68,129 @@ firebase deploy --only functions`;
     }
   };
 
-  const handleMarkStatus = async (log: EmailLogRecord, status: 'sent' | 'queued') => {
+  const handleTriggerSendAll = (markCompleted: boolean) => {
     if (!selectedEvent) return;
-    setUpdatingId(log.id);
-    try {
-      await updateEmailLogDeliveryStatus(selectedEvent.id, log, status, '');
-    } finally {
-      setUpdatingId('');
-    }
+    const targets = pendingCertAttendees.length > 0 ? pendingCertAttendees : checkedInAttendees;
+    if (targets.length === 0) return;
+
+    onRequestSendEmails({
+      title: markCompleted
+        ? 'Complete Event & Send Certificates via Gmail'
+        : 'Send Official Certificates via Gmail',
+      description: markCompleted
+        ? `This will mark "${selectedEvent.title}" as Completed and send personalized official certificate emails directly from ${senderEmail} to all ${targets.length} verified attendee(s).`
+        : `Send personalized official certificate emails directly from ${senderEmail} to ${targets.length} verified attendee(s) of "${selectedEvent.title}".`,
+      recipients: targets,
+      emailType: 'certificate_delivery',
+      markEventCompleted: markCompleted,
+    });
+  };
+
+  const handleSendSingleLog = (log: EmailLogRecord) => {
+    const matchedReg = registrations.find((r) => r.id === log.registrationId);
+    if (!matchedReg || !selectedEvent) return;
+    onRequestSendEmails({
+      title: `Send ${log.emailType === 'certificate_delivery' ? 'Certificate' : 'Confirmation'} via Gmail`,
+      description: `Send this ${
+        log.emailType === 'certificate_delivery' ? 'official certificate' : 'attendance confirmation'
+      } email directly from ${senderEmail} to ${matchedReg.fullName} (${matchedReg.email}).`,
+      recipients: [matchedReg],
+      emailType: log.emailType,
+      markEventCompleted: false,
+    });
   };
 
   return (
     <div className="space-y-6">
-      {/* Header & Summary */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Header & Direct Gmail Trigger Actions */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900">
-            Firebase Cloud Functions &amp; Email Automation
+            Gmail Delivery Triggers &amp; Firebase Cloud Functions
           </h2>
           <p className="text-sm text-slate-600">
-            Event-driven Firestore triggers automatically dispatch attendance confirmations and
-            post-event certificate delivery emails.
+            Send official PDF certificates directly from{' '}
+            <span className="font-mono text-slate-900">{senderEmail}</span> to attendee emails, or
+            deploy automated Firestore background triggers.
           </p>
         </div>
-        {isAdmin && selectedEvent && selectedEvent.status !== 'completed' && onCompleteEvent && (
-          <button
-            type="button"
-            disabled={completing}
-            onClick={async () => {
-              setCompleting(true);
-              try {
-                await onCompleteEvent();
-              } finally {
-                setCompleting(false);
-              }
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
-          >
-            <Send className="w-3.5 h-3.5" />
-            {completing ? 'Completing Event...' : 'Complete Event & Dispatch Certificates'}
-          </button>
+
+        {isAdmin && selectedEvent && (
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={checkedInAttendees.length === 0}
+              onClick={() => handleTriggerSendAll(false)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Send Pending ({pendingCertAttendees.length || checkedInAttendees.length}) via Gmail
+            </button>
+            {selectedEvent.status !== 'completed' && (
+              <button
+                type="button"
+                disabled={checkedInAttendees.length === 0}
+                onClick={() => handleTriggerSendAll(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Complete Event &amp; Send via Gmail
+              </button>
+            )}
+          </div>
         )}
+      </div>
+
+      {/* Gmail Sender Status Row */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-0.5">
+          <p className="text-xs font-semibold text-slate-500">Direct Gmail Sender Account</p>
+          <p className="text-sm font-mono font-semibold text-slate-900">{senderEmail}</p>
+        </div>
+        <div className="text-xs text-slate-600">
+          {hasGmailToken ? (
+            <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700">
+              <CheckCircle2 className="w-4 h-4" />
+              Gmail sending session active — ready to deliver with PDF attachment
+            </span>
+          ) : (
+            <span>
+              Click any Send via Gmail button to confirm and connect your Google sending session.
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Trigger Architecture Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
+          <p className="text-xs font-mono font-semibold text-emerald-800">Gmail API Dispatch</p>
+          <h3 className="text-sm font-bold text-slate-900">Instant Sender From Your Gmail</h3>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Sends official HTML emails with the personalized PDF certificate attached straight from{' '}
+            <span className="font-mono text-[11px]">{senderEmail}</span> after explicit organizer
+            confirmation.
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
           <p className="text-xs font-mono font-semibold text-emerald-800">onAttendanceCreated</p>
           <h3 className="text-sm font-bold text-slate-900">Check-In Confirmation Trigger</h3>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Fires on <code className="font-mono text-[11px]">events/&#123;eventId&#125;/registrations/&#123;id&#125;</code>{' '}
-            creation when status is checked in. Emails claim code &amp; check-in receipt immediately.
+            Cloud Function trigger on{' '}
+            <code className="font-mono text-[11px]">events/&#123;eventId&#125;/registrations/&#123;id&#125;</code>{' '}
+            creation to confirm verified attendance and deliver Claim Codes.
           </p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
           <p className="text-xs font-mono font-semibold text-emerald-800">onEventCompleted</p>
-          <h3 className="text-sm font-bold text-slate-900">Post-Event Certificate Delivery</h3>
+          <h3 className="text-sm font-bold text-slate-900">Post-Event Batch Delivery</h3>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Fires on <code className="font-mono text-[11px]">events/&#123;eventId&#125;</code> update
-            when status transitions to <strong className="text-slate-900">completed</strong>.
-            Dispatches official certificate links to all verified attendees.
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
-          <p className="text-xs font-mono font-semibold text-emerald-800">
-            triggerCertificateDispatch
-          </p>
-          <h3 className="text-sm font-bold text-slate-900">Admin Retry Callable Function</h3>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Authenticated HTTPS <code className="font-mono text-[11px]">onCall</code> function
-            allowing verified organizers to retry failed deliveries or send selective batches.
+            Cloud Function trigger on{' '}
+            <code className="font-mono text-[11px]">events/&#123;eventId&#125;</code> when status
+            transitions to <strong className="text-slate-900">completed</strong> for unattended
+            server-side batch sending.
           </p>
         </div>
       </div>
@@ -138,7 +200,7 @@ firebase deploy --only functions`;
         <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <h3 className="text-base font-bold text-slate-900">
-              Automated Email Delivery Queue &amp; Audit Log
+              Email Delivery Queue &amp; Audit Log
             </h3>
             <p className="text-xs text-slate-500 tabular-nums">
               {selectedEvent ? selectedEvent.title : 'No event selected'} · Total:{' '}
@@ -173,10 +235,10 @@ firebase deploy --only functions`;
         {filteredLogs.length === 0 ? (
           <div className="p-10 text-center space-y-2">
             <Mail className="w-8 h-8 text-slate-400 mx-auto" />
-            <p className="text-sm font-semibold text-slate-900">No Email Triggers Logged Yet</p>
+            <p className="text-sm font-semibold text-slate-900">No Email Deliveries Logged Yet</p>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Check-in confirmation emails appear automatically when participants verify attendance,
-              and certificate delivery emails queue when you mark the event Completed.
+              Use &ldquo;Send Pending via Gmail&rdquo; above or check in attendees to trigger
+              certificate emails from {senderEmail}.
             </p>
           </div>
         ) : (
@@ -185,7 +247,7 @@ firebase deploy --only functions`;
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500">
                   <th className="py-3 px-4">Recipient</th>
-                  <th className="py-3 px-4">Trigger Function</th>
+                  <th className="py-3 px-4">Trigger &amp; Type</th>
                   <th className="py-3 px-4">Claim Code</th>
                   <th className="py-3 px-4">Delivery State</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -202,7 +264,7 @@ firebase deploy --only functions`;
                       <div className="font-mono text-xs text-slate-800">{log.triggerFunction}</div>
                       <div className="text-xs text-slate-500">
                         {log.emailType === 'certificate_delivery'
-                          ? 'Post-Event Certificate'
+                          ? 'Official Certificate (PDF)'
                           : 'Check-In Confirmation'}
                       </div>
                     </td>
@@ -228,6 +290,11 @@ firebase deploy --only functions`;
                         )}
                         <span className="capitalize">{log.status}</span>
                       </span>
+                      {log.errorMessage && (
+                        <p className="text-[11px] text-red-600 mt-0.5 max-w-[200px] truncate">
+                          {log.errorMessage}
+                        </p>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="inline-flex items-center gap-2">
@@ -239,14 +306,14 @@ firebase deploy --only functions`;
                           <Eye className="w-3.5 h-3.5" />
                           Preview
                         </button>
-                        {isAdmin && log.status !== 'sent' && (
+                        {isAdmin && (
                           <button
                             type="button"
-                            disabled={updatingId === log.id}
-                            onClick={() => void handleMarkStatus(log, 'sent')}
-                            className="px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-md whitespace-nowrap disabled:opacity-50"
+                            onClick={() => handleSendSingleLog(log)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-md whitespace-nowrap"
                           >
-                            {updatingId === log.id ? 'Updating...' : 'Mark Sent'}
+                            <Send className="w-3 h-3" />
+                            {log.status === 'sent' ? 'Resend' : 'Send via Gmail'}
                           </button>
                         )}
                       </div>
@@ -265,7 +332,7 @@ firebase deploy --only functions`;
           <div className="flex items-center gap-2.5">
             <Terminal className="w-4 h-4 text-emerald-700" />
             <h3 className="text-sm font-bold text-slate-900">
-              Deploy Cloud Functions to Firebase Project ({FIREBASE_PROJECT_ID})
+              Optional: Deploy Background Cloud Functions ({FIREBASE_PROJECT_ID})
             </h3>
           </div>
           <button
@@ -279,11 +346,11 @@ firebase deploy --only functions`;
         </div>
 
         <p className="text-xs text-slate-600 leading-relaxed">
-          The complete Cloud Functions v2 backend is pre-configured in{' '}
-          <code className="font-mono text-slate-800">functions/src/index.ts</code> targeting named
-          Firestore database <code className="font-mono text-slate-800">{FIRESTORE_DATABASE_ID}</code>.
-          Provide your SMTP secret (<code className="font-mono text-slate-800">SMTP_PASS</code>) and
-          deploy via Firebase CLI to activate live outbound email delivery:
+          Direct Gmail delivery works immediately from this portal using your signed-in Gmail
+          account. For unattended server-side background triggers, deploy{' '}
+          <code className="font-mono text-slate-800">functions/src/index.ts</code> (configured for
+          database <code className="font-mono text-slate-800">{FIRESTORE_DATABASE_ID}</code> and
+          default sender <code className="font-mono text-slate-800">{senderEmail}</code>):
         </p>
 
         <pre className="p-4 bg-slate-900 text-slate-100 rounded-lg text-xs font-mono overflow-x-auto leading-relaxed">
@@ -299,7 +366,8 @@ firebase deploy --only functions`;
               <div>
                 <h3 className="text-base font-bold text-slate-900">Automated Email Preview</h3>
                 <p className="text-xs text-slate-500">
-                  Triggered by <span className="font-mono">{previewLog.triggerFunction}</span>
+                  From <span className="font-mono">{senderEmail}</span> · Trigger:{' '}
+                  <span className="font-mono">{previewLog.triggerFunction}</span>
                 </p>
               </div>
               <button
@@ -315,6 +383,10 @@ firebase deploy --only functions`;
             <div className="p-6 space-y-5">
               <div className="text-xs space-y-1.5 pb-4 border-b border-slate-200">
                 <div className="flex gap-3">
+                  <span className="text-slate-500 w-16">From:</span>
+                  <span className="font-mono text-slate-900">CertFlow Official &lt;{senderEmail}&gt;</span>
+                </div>
+                <div className="flex gap-3">
                   <span className="text-slate-500 w-16">To:</span>
                   <span className="font-mono text-slate-900">
                     {previewLog.recipientName} &lt;{previewLog.recipientEmail}&gt;
@@ -326,7 +398,6 @@ firebase deploy --only functions`;
                 </div>
               </div>
 
-              {/* Rendered Email Card */}
               <div className="border border-slate-200 rounded-lg overflow-hidden">
                 <div className="bg-emerald-900 text-white px-6 py-5">
                   <p className="text-[11px] uppercase tracking-widest text-emerald-200">
@@ -344,7 +415,7 @@ firebase deploy --only functions`;
                   </p>
                   <p>
                     {previewLog.emailType === 'certificate_delivery'
-                      ? 'The event has officially concluded and your cryptographically verified digital certificate is now ready for immediate download.'
+                      ? 'The event has officially concluded and your cryptographically verified digital certificate is attached as a PDF and ready for online verification.'
                       : 'Your event attendance check-in has been recorded and verified. Retain your certificate claim code below for verification and post-event certificate download.'}
                   </p>
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center space-y-1">

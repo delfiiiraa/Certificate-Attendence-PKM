@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { compressWebcamSnapshot } from '../lib/certificateRenderer';
 import { submitLiveAttendanceCheckIn } from '../lib/firestoreService';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 interface AttendanceCheckInViewProps {
   user: User | null;
@@ -577,13 +578,7 @@ export function AttendanceCheckInView({
                     verified account.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void onSignIn()}
-                  className="px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                >
-                  Sign In with Google
-                </button>
+                <GoogleSignInButton compact onClick={() => void onSignIn()} />
               </div>
             )}
 

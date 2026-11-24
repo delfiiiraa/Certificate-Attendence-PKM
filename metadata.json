@@ -1,6 +1,11 @@
 {
   "name": "CertFlow — Event Attendance & Digital Certificate Platform",
   "description": "Manage participant registrations, live event attendance tracking with camera and GPS verification, custom certificate template uploads, cryptographic QR verification, and automated Firebase Cloud Functions email delivery.",
-  "requestFramePermissions": ["camera", "geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

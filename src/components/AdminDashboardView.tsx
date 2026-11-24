@@ -34,12 +34,13 @@ import { buildAttendanceUrl } from '../lib/crypto';
 import {
   addPreRegisteredParticipant,
   adminCheckInExistingParticipant,
-  completeEventAndTriggerCertificateDelivery,
   createOrUpdateEvent,
   seedFlagshipSampleEvent,
 } from '../lib/firestoreService';
 import { TemplateStudioView } from './TemplateStudioView';
 import { CloudFunctionsView } from './CloudFunctionsView';
+import { GoogleSignInButton } from './GoogleSignInButton';
+import type { SendEmailConfirmRequest } from './SendEmailConfirmModal';
 
 interface AdminDashboardViewProps {
   user: User | null;
@@ -53,6 +54,8 @@ interface AdminDashboardViewProps {
   onSignIn: () => Promise<void>;
   onOpenCertificate: (claimCode: string) => void;
   onOpenCheckInPortal: (eventId: string) => void;
+  hasGmailToken: boolean;
+  onRequestSendEmails: (req: SendEmailConfirmRequest) => void;
   initialSubTab?: AdminSubTab;
 }
 
@@ -70,6 +73,8 @@ export function AdminDashboardView({
   onSignIn,
   onOpenCertificate,
   onOpenCheckInPortal,
+  hasGmailToken,
+  onRequestSendEmails,
   initialSubTab = 'events',
 }: AdminDashboardViewProps) {
   const [subTab, setSubTab] = useState<AdminSubTab>(initialSubTab);
@@ -120,7 +125,6 @@ export function AdminDashboardView({
   const [savingParticipant, setSavingParticipant] = useState(false);
 
   const [checkingInId, setCheckingInId] = useState('');
-  const [completingEvent, setCompletingEvent] = useState(false);
 
   useEffect(() => {
     setSubTab(initialSubTab);
@@ -151,13 +155,9 @@ export function AdminDashboardView({
               rosters, custom certificate templates, and automated email triggers.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void onSignIn()}
-            className="px-5 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
-          >
-            Sign In with Google
-          </button>
+          <div className="flex justify-center">
+            <GoogleSignInButton onClick={() => void onSignIn()} />
+          </div>
         </div>
       </div>
     );
@@ -304,23 +304,55 @@ export function AdminDashboardView({
     }
   };
 
-  const handleCompleteEvent = async () => {
+  const senderEmail = user.email || 'delfikarnain@gmail.com';
+
+  const handleTriggerCompleteAndSend = () => {
     if (!selectedEvent) return;
-    setCompletingEvent(true);
-    setActionError('');
-    try {
-      const { queuedCount } = await completeEventAndTriggerCertificateDelivery(
-        selectedEvent,
-        registrations
-      );
-      setActionBanner(
-        `Event marked Completed. Triggered onEventCompleted workflow and queued ${queuedCount} automated certificate delivery email(s).`
-      );
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to complete event.');
-    } finally {
-      setCompletingEvent(false);
+    const checkedIn = registrations.filter(
+      (r) => r.registrationStatus === 'checked_in' && Boolean(r.claimCode) && Boolean(r.email)
+    );
+    if (checkedIn.length === 0) {
+      setActionError('There are no checked-in attendees with issued claim codes yet.');
+      return;
     }
+    onRequestSendEmails({
+      title: 'Complete Event & Send Certificates via Gmail',
+      description: `This will mark "${selectedEvent.title}" as Completed and send official personalized PDF certificates directly from ${senderEmail} to ${checkedIn.length} verified attendee(s).`,
+      recipients: checkedIn,
+      emailType: 'certificate_delivery',
+      markEventCompleted: true,
+    });
+  };
+
+  const handleTriggerSendPendingBulk = () => {
+    if (!selectedEvent) return;
+    const checkedIn = registrations.filter(
+      (r) => r.registrationStatus === 'checked_in' && Boolean(r.claimCode) && Boolean(r.email)
+    );
+    const pending = checkedIn.filter((r) => r.certificateEmailStatus !== 'sent');
+    const targets = pending.length > 0 ? pending : checkedIn;
+    if (targets.length === 0) {
+      setActionError('There are no checked-in attendees eligible to receive certificates yet.');
+      return;
+    }
+    onRequestSendEmails({
+      title: 'Send Official Certificates via Gmail',
+      description: `Send official personalized PDF certificates directly from ${senderEmail} to ${targets.length} verified attendee(s) of "${selectedEvent.title}".`,
+      recipients: targets,
+      emailType: 'certificate_delivery',
+      markEventCompleted: false,
+    });
+  };
+
+  const handleTriggerSendSingleAttendee = (reg: RegistrationRecord) => {
+    if (!selectedEvent || !reg.claimCode) return;
+    onRequestSendEmails({
+      title: 'Send Official Certificate via Gmail',
+      description: `Send the official PDF certificate and QR verification link directly from ${senderEmail} to ${reg.fullName} (${reg.email}).`,
+      recipients: [reg],
+      emailType: 'certificate_delivery',
+      markEventCompleted: false,
+    });
   };
 
   const handleExportCsv = () => {
@@ -584,17 +616,23 @@ export function AdminDashboardView({
                       <ExternalLink className="w-3.5 h-3.5" />
                       Open Check-In Portal
                     </button>
-                    {selectedEvent.status !== 'completed' && (
+                    {selectedEvent.status !== 'completed' ? (
                       <button
                         type="button"
-                        disabled={completingEvent}
-                        onClick={() => void handleCompleteEvent()}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 rounded-lg transition-colors whitespace-nowrap"
+                        onClick={handleTriggerCompleteAndSend}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
                       >
                         <Send className="w-3.5 h-3.5" />
-                        {completingEvent
-                          ? 'Completing...'
-                          : 'Complete Event & Send Certificates'}
+                        Complete Event &amp; Send via Gmail
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleTriggerSendPendingBulk}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Send Certificates via Gmail
                       </button>
                     )}
                   </div>
@@ -729,6 +767,15 @@ export function AdminDashboardView({
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
+                    onClick={handleTriggerSendPendingBulk}
+                    disabled={checkedInCount === 0}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 rounded-lg whitespace-nowrap"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    Send Certificates via Gmail
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleExportCsv}
                     disabled={registrations.length === 0}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-40 rounded-lg whitespace-nowrap"
@@ -845,14 +892,24 @@ export function AdminDashboardView({
                           </td>
                           <td className="py-3 px-4 text-right">
                             {reg.registrationStatus === 'checked_in' && reg.claimCode ? (
-                              <button
-                                type="button"
-                                onClick={() => onOpenCertificate(reg.claimCode)}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-md whitespace-nowrap"
-                              >
-                                <Award className="w-3.5 h-3.5" />
-                                Certificate
-                              </button>
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleTriggerSendSingleAttendee(reg)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md whitespace-nowrap"
+                                >
+                                  <Mail className="w-3.5 h-3.5" />
+                                  {reg.certificateEmailStatus === 'sent' ? 'Resend' : 'Send Email'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenCertificate(reg.claimCode)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-md whitespace-nowrap"
+                                >
+                                  <Award className="w-3.5 h-3.5" />
+                                  View
+                                </button>
+                              </div>
                             ) : (
                               <button
                                 type="button"
@@ -897,9 +954,12 @@ export function AdminDashboardView({
           {subTab === 'functions' && (
             <CloudFunctionsView
               selectedEvent={selectedEvent}
+              registrations={registrations}
               emailLogs={emailLogs}
               isAdmin={isAdmin}
-              onCompleteEvent={handleCompleteEvent}
+              senderEmail={senderEmail}
+              hasGmailToken={hasGmailToken}
+              onRequestSendEmails={onRequestSendEmails}
             />
           )}
         </section>

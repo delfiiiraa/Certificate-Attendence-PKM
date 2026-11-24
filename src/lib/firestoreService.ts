@@ -503,6 +503,93 @@ export async function updateEmailLogDeliveryStatus(
   }
 }
 
+export async function recordGmailDispatchResult(params: {
+  eventId: string;
+  registration: RegistrationRecord;
+  emailType: 'checkin_confirmation' | 'certificate_delivery';
+  subject: string;
+  verifyUrl: string;
+  status: 'sent' | 'failed';
+  errorMessage?: string;
+  triggerFunction?: 'onAttendanceCreated' | 'onEventCompleted' | 'triggerCertificateDispatch';
+  markEventCompleted?: boolean;
+}): Promise<void> {
+  const {
+    eventId,
+    registration,
+    emailType,
+    subject,
+    verifyUrl,
+    status,
+    errorMessage = '',
+    triggerFunction = 'triggerCertificateDispatch',
+  } = params;
+
+  const logDocId =
+    emailType === 'certificate_delivery'
+      ? `cert_${registration.id}`
+      : `confirm_${registration.id}`;
+
+  const batch = writeBatch(db);
+  const logRef = doc(db, 'events', eventId, 'emailLogs', logDocId);
+  const regRef = doc(db, 'events', eventId, 'registrations', registration.id);
+
+  let logExists = false;
+  try {
+    const existingSnap = await getDoc(logRef);
+    logExists = existingSnap.exists();
+  } catch {
+    logExists = false;
+  }
+
+  if (logExists) {
+    batch.update(logRef, {
+      status,
+      errorMessage: sanitizeString(errorMessage, 300),
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.set(logRef, {
+      eventId,
+      registrationId: registration.id,
+      userId: registration.userId,
+      recipientName: registration.fullName,
+      recipientEmail: registration.email,
+      claimCode: registration.claimCode,
+      emailType,
+      triggerFunction,
+      subject: sanitizeString(subject, SCHEMA_LIMITS.SUBJECT_MAX),
+      certificateUrl: verifyUrl.slice(0, SCHEMA_LIMITS.CERT_URL_MAX),
+      status,
+      errorMessage: sanitizeString(errorMessage, 300),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  if (emailType === 'certificate_delivery') {
+    batch.update(regRef, {
+      certificateEmailStatus: status,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.update(regRef, {
+      confirmationEmailStatus: status,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      logExists ? OperationType.UPDATE : OperationType.CREATE,
+      `events/${eventId}/emailLogs/${logDocId}`
+    );
+  }
+}
+
 export async function saveCertificateTemplate(params: {
   templateId?: string;
   ownerId: string;

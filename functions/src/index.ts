@@ -15,8 +15,8 @@ const db = getFirestore(app, DATABASE_ID);
 // Runtime configuration & Firebase Secrets (set via: firebase functions:secrets:set SMTP_PASS)
 const smtpHost = defineString('SMTP_HOST', { default: 'smtp.gmail.com' });
 const smtpPort = defineString('SMTP_PORT', { default: '587' });
-const smtpUser = defineString('SMTP_USER');
-const smtpFrom = defineString('SMTP_FROM', { default: 'CertFlow Official <noreply@uinjakarta.id>' });
+const smtpUser = defineString('SMTP_USER', { default: 'delfikarnain@gmail.com' });
+const smtpFrom = defineString('SMTP_FROM', { default: 'CertFlow Official <delfikarnain@gmail.com>' });
 const portalBaseUrl = defineString('PORTAL_BASE_URL', {
   default: 'https://ais-pre-4nt2qbdfzcnlcm7owjl7m5-1065828704075.asia-southeast1.run.app',
 });

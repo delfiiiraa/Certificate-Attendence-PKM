@@ -10,10 +10,12 @@ import { LogOut } from 'lucide-react';
 import {
   auth,
   db,
+  getGmailAccessToken,
   handleFirestoreError,
   OperationType,
   signInWithGoogle,
   signOutUser,
+  subscribeGmailToken,
 } from './firebase';
 import {
   BOOTSTRAP_ADMIN_EMAIL,
@@ -28,7 +30,17 @@ import { AttendanceCheckInView } from './components/AttendanceCheckInView';
 import { VerifyCertificateView } from './components/VerifyCertificateView';
 import { AdminDashboardView, type AdminSubTab } from './components/AdminDashboardView';
 import { CloudFunctionsView } from './components/CloudFunctionsView';
-import { completeEventAndTriggerCertificateDelivery } from './lib/firestoreService';
+import { GoogleSignInButton } from './components/GoogleSignInButton';
+import {
+  SendEmailConfirmModal,
+  type SendEmailConfirmRequest,
+} from './components/SendEmailConfirmModal';
+import {
+  completeEventAndTriggerCertificateDelivery,
+  recordGmailDispatchResult,
+} from './lib/firestoreService';
+import { sendCertificateEmailViaGmail } from './lib/gmailService';
+import { buildVerifyUrl } from './lib/crypto';
 
 type TopView = 'checkin' | 'verify' | 'admin' | 'functions';
 
@@ -59,10 +71,11 @@ function CertFlowApp() {
   const [selectedEventId, setSelectedEventId] = useState<string>(initial.eventId);
   const [verifyClaimCode, setVerifyClaimCode] = useState<string>(initial.claimCode);
 
-  // Auth state
+  // Auth & Gmail in-memory token state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [gmailToken, setGmailToken] = useState<string | null>(getGmailAccessToken());
 
   // Live Firestore state
   const [events, setEvents] = useState<EventRecord[]>([]);
@@ -70,6 +83,16 @@ function CertFlowApp() {
   const [registrations, setRegistrations] = useState<RegistrationRecord[]>([]);
   const [emailLogs, setEmailLogs] = useState<EmailLogRecord[]>([]);
   const [authError, setAuthError] = useState('');
+
+  // Mandatory explicit user confirmation modal state for Gmail sending
+  const [pendingEmailRequest, setPendingEmailRequest] = useState<SendEmailConfirmRequest | null>(
+    null
+  );
+
+  // Subscribe to in-memory Gmail access token
+  useEffect(() => {
+    return subscribeGmailToken(setGmailToken);
+  }, []);
 
   // Track Firebase auth & admin role
   useEffect(() => {
@@ -151,7 +174,6 @@ function CertFlowApp() {
     return () => unsub();
   }, [authReady, user, isAdmin]);
 
-  // Live Registrations & Email Logs for the currently selected event (strictly authenticated + PII scoped)
   const activeEvent = events.find((e) => e.id === selectedEventId) || events[0] || null;
 
   useEffect(() => {
@@ -203,12 +225,25 @@ function CertFlowApp() {
     };
   }, [authReady, user, isAdmin, activeEvent?.id]);
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (): Promise<void> => {
     setAuthError('');
     try {
       await signInWithGoogle();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Google Sign-In could not be completed.');
+    }
+  };
+
+  const handleRefreshGmailAuth = async (): Promise<string | null> => {
+    setAuthError('');
+    try {
+      const res = await signInWithGoogle();
+      return res.accessToken;
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'Unable to refresh Google Gmail session.'
+      );
+      return null;
     }
   };
 
@@ -224,10 +259,82 @@ function CertFlowApp() {
     window.history.replaceState(null, '', `/?attendance=${encodeURIComponent(eventId)}`);
   };
 
-  const handleCompleteFromFunctionsTab = async () => {
-    if (!activeEvent) return;
-    await completeEventAndTriggerCertificateDelivery(activeEvent, registrations);
+  const handleConfirmedGmailDispatch = async (params: {
+    recipients: RegistrationRecord[];
+    emailType: 'checkin_confirmation' | 'certificate_delivery';
+    attachPdf: boolean;
+    markEventCompleted: boolean;
+    onProgress: (index: number, total: number, currentName: string) => void;
+  }) => {
+    const token = getGmailAccessToken();
+    if (!token || !activeEvent || !user) {
+      throw new Error('Active Gmail session and selected event are required.');
+    }
+
+    const senderEmail = user.email || BOOTSTRAP_ADMIN_EMAIL;
+    const activeTemplate =
+      templates.find((t) => t.id === activeEvent.templateId) ||
+      templates.find((t) => t.isDefault) ||
+      null;
+
+    if (params.markEventCompleted && activeEvent.status !== 'completed') {
+      await completeEventAndTriggerCertificateDelivery(activeEvent, registrations);
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < params.recipients.length; i++) {
+      const reg = params.recipients[i];
+      params.onProgress(i + 1, params.recipients.length, reg.fullName);
+
+      try {
+        const res = await sendCertificateEmailViaGmail({
+          accessToken: token,
+          senderEmail,
+          event: activeEvent,
+          registration: reg,
+          template: activeTemplate,
+          emailType: params.emailType,
+          attachPdf: params.attachPdf,
+        });
+
+        await recordGmailDispatchResult({
+          eventId: activeEvent.id,
+          registration: reg,
+          emailType: params.emailType,
+          subject: res.subject,
+          verifyUrl: res.verifyUrl,
+          status: 'sent',
+          triggerFunction: params.markEventCompleted
+            ? 'onEventCompleted'
+            : 'triggerCertificateDispatch',
+        });
+        sentCount++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Gmail send failed';
+        errors.push(`${reg.email}: ${msg}`);
+        await recordGmailDispatchResult({
+          eventId: activeEvent.id,
+          registration: reg,
+          emailType: params.emailType,
+          subject: `[Official E-Certificate] ${activeEvent.title} — ${reg.fullName}`,
+          verifyUrl: buildVerifyUrl(reg.claimCode),
+          status: 'failed',
+          errorMessage: msg,
+          triggerFunction: params.markEventCompleted
+            ? 'onEventCompleted'
+            : 'triggerCertificateDispatch',
+        });
+        failedCount++;
+      }
+    }
+
+    return { sentCount, failedCount, errors };
   };
+
+  const senderEmail = user?.email || BOOTSTRAP_ADMIN_EMAIL;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -253,7 +360,7 @@ function CertFlowApp() {
                 ['checkin', 'Check-In'],
                 ['verify', 'Verify Certificate'],
                 ['admin', 'Admin Console'],
-                ['functions', 'Cloud Functions'],
+                ['functions', 'Email & Functions'],
               ] as const
             ).map(([id, label]) => {
               const active = activeView === id;
@@ -290,13 +397,7 @@ function CertFlowApp() {
                 <LogOut className="w-3.5 h-3.5 text-slate-500" />
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => void handleSignIn()}
-                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                Sign In
-              </button>
+              <GoogleSignInButton compact onClick={() => void handleSignIn()} />
             )}
           </div>
         </div>
@@ -308,7 +409,7 @@ function CertFlowApp() {
               ['checkin', 'Check-In'],
               ['verify', 'Verify'],
               ['admin', 'Admin'],
-              ['functions', 'Cloud Functions'],
+              ['functions', 'Email & Functions'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -367,6 +468,8 @@ function CertFlowApp() {
             onSignIn={handleSignIn}
             onOpenCertificate={handleOpenCertificate}
             onOpenCheckInPortal={handleOpenCheckInPortal}
+            hasGmailToken={Boolean(gmailToken)}
+            onRequestSendEmails={setPendingEmailRequest}
             initialSubTab={adminSubTab}
           />
         )}
@@ -375,18 +478,31 @@ function CertFlowApp() {
           <div className="max-w-6xl mx-auto px-6 py-10">
             <CloudFunctionsView
               selectedEvent={activeEvent}
+              registrations={registrations}
               emailLogs={emailLogs}
               isAdmin={isAdmin}
-              onCompleteEvent={handleCompleteFromFunctionsTab}
+              senderEmail={senderEmail}
+              hasGmailToken={Boolean(gmailToken)}
+              onRequestSendEmails={setPendingEmailRequest}
             />
           </div>
         )}
       </main>
 
+      {/* Mandatory Explicit Confirmation Dialog for Gmail Certificate Sending */}
+      <SendEmailConfirmModal
+        request={pendingEmailRequest}
+        senderEmail={senderEmail}
+        hasGmailToken={Boolean(gmailToken)}
+        onRefreshGmailAuth={handleRefreshGmailAuth}
+        onConfirm={handleConfirmedGmailDispatch}
+        onClose={() => setPendingEmailRequest(null)}
+      />
+
       {/* Clean Editorial Footer */}
       <footer className="border-t border-slate-200 bg-white mt-auto">
         <div className="max-w-[1400px] mx-auto px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-          <span>CertFlow · Event Attendance, Cryptographic Certificates &amp; Automated Delivery</span>
+          <span>CertFlow · Event Attendance, Cryptographic Certificates &amp; Gmail Delivery</span>
           <div className="flex items-center gap-4">
             <button
               type="button"
